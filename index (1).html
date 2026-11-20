@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>SmartPOS — Smart Barcode Billing & Thermal Printing</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .receipt-font { font-family: 'JetBrains Mono', monospace; }
+    body { -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    @media (max-width: 640px) {
+      input, select, textarea { font-size: 16px !important; }
+      #view-reports .text-3xl { font-size: 1.4rem; line-height: 1.8rem; }
+      table th, table td { padding-left: .6rem !important; padding-right: .6rem !important; }
+    }
+    @media print {
+      body * { visibility: hidden; }
+      #thermal-receipt-preview, #thermal-receipt-preview * { visibility: visible; }
+      #thermal-receipt-preview { position: absolute; left: 0; top: 0; width: 58mm; box-shadow: none; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- LOGIN -->
+  <div id="login-screen" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+      <div class="text-center mb-6">
+        <div class="w-16 h-16 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl shadow-lg">
+          <i class="fa-solid fa-barcode"></i>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-900">SmartPOS Billing</h1>
+        <p class="text-sm text-slate-500 mt-1">Scan Smart • Bill Fast • Print Easy</p>
+      </div>
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Role</label>
+          <select id="login-user" class="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <option value="admin">Admin (Store Owner)</option>
+            <option value="cashier">Cashier 01 (Counter A)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Access PIN</label>
+          <input type="password" id="login-pin" required inputmode="numeric" autocomplete="off" class="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Enter PIN">
+          <p class="text-[11px] text-slate-400 mt-1">Default PIN: Admin 1234, Cashier 1111 (Settings me badal lein)</p>
+        </div>
+        <p id="login-error" class="hidden text-sm text-rose-600 font-medium"></p>
+        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition shadow-md">
+          Sign In to Terminal <i class="fa-solid fa-arrow-right ml-1"></i>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- HEADER -->
+  <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-3 md:px-4 h-14 md:h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="bg-emerald-500 p-2 rounded-lg text-slate-900 font-bold"><i class="fa-solid fa-barcode text-lg"></i></div>
+        <div>
+          <span class="font-bold text-lg tracking-tight">SmartPOS</span>
+          <span class="hidden sm:inline-block text-xs bg-slate-800 text-emerald-400 px-2 py-0.5 rounded ml-2 border border-slate-700">Web + Bluetooth Thermal</span>
+        </div>
+      </div>
+
+      <nav class="hidden md:flex space-x-1 sm:space-x-2">
+        <button onclick="switchTab('pos')" id="tab-pos" class="nav-btn bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fa-solid fa-cash-register mr-1.5"></i><span class="hidden md:inline">Billing POS</span>
+        </button>
+        <button onclick="switchTab('inventory')" id="tab-inventory" class="nav-btn admin-only text-slate-300 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fa-solid fa-boxes-stacked mr-1.5"></i><span class="hidden md:inline">Products</span>
+        </button>
+        <button onclick="switchTab('reports')" id="tab-reports" class="nav-btn text-slate-300 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fa-solid fa-chart-line mr-1.5"></i><span class="hidden md:inline">History & Reports</span>
+        </button>
+        <button onclick="switchTab('settings')" id="tab-settings" class="nav-btn admin-only text-slate-300 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fa-solid fa-gear mr-1.5"></i><span class="hidden md:inline">Settings</span>
+        </button>
+      </nav>
+
+      <div class="flex items-center space-x-3">
+        <button onclick="connectBluetoothPrinter()" id="bt-status-btn" class="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition">
+          <i class="fa-brands fa-bluetooth-b text-blue-400"></i>
+          <span id="bt-status-text" class="max-w-[100px] sm:max-w-none truncate">Connect Printer</span>
+        </button>
+        <button onclick="logout()" title="Logout" class="text-slate-400 hover:text-white p-2"><i class="fa-solid fa-right-from-bracket"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MOBILE BOTTOM NAV -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900 border-t border-slate-700 flex safe-bottom">
+    <button onclick="switchTab('pos')" id="mtab-pos" class="flex-1 py-2 text-center text-emerald-400">
+      <i class="fa-solid fa-cash-register block text-lg"></i><span class="text-[11px]">Billing</span>
+    </button>
+    <button onclick="switchTab('inventory')" id="mtab-inventory" class="admin-only flex-1 py-2 text-center text-slate-400">
+      <i class="fa-solid fa-boxes-stacked block text-lg"></i><span class="text-[11px]">Products</span>
+    </button>
+    <button onclick="switchTab('reports')" id="mtab-reports" class="flex-1 py-2 text-center text-slate-400">
+      <i class="fa-solid fa-chart-line block text-lg"></i><span class="text-[11px]">Reports</span>
+    </button>
+    <button onclick="switchTab('settings')" id="mtab-settings" class="admin-only flex-1 py-2 text-center text-slate-400">
+      <i class="fa-solid fa-gear block text-lg"></i><span class="text-[11px]">Settings</span>
+    </button>
+  </nav>
+
+  <!-- FLOATING CART BAR (mobile / tablet) -->
+  <button id="cart-bar" onclick="scrollToCart()" class="hidden lg:hidden fixed left-3 right-3 bottom-[4.75rem] md:bottom-4 z-30 bg-emerald-600 text-white rounded-xl shadow-lg px-4 py-3">
+    <div class="flex items-center justify-between">
+      <span class="text-sm font-semibold"><i class="fa-solid fa-basket-shopping mr-2"></i><span id="cart-bar-count">0 items</span></span>
+      <span class="text-sm font-bold"><span id="cart-bar-total">₹0.00</span> <i class="fa-solid fa-chevron-down ml-1 text-xs"></i></span>
+    </div>
+  </button>
+
+  <main class="flex-grow max-w-7xl w-full mx-auto p-3 sm:p-6 pb-32 md:pb-24 lg:pb-6">
+
+    <!-- ========== POS ========== -->
+    <section id="view-pos" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div class="lg:col-span-7 space-y-6">
+
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <h2 class="font-bold text-slate-800 flex items-center"><i class="fa-solid fa-camera text-emerald-600 mr-2"></i> Camera Barcode Scanner</h2>
+            <div class="flex space-x-2">
+              <button id="start-cam-btn" onclick="startCameraScanner()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"><i class="fa-solid fa-video mr-1"></i> Start Camera</button>
+              <button id="stop-cam-btn" onclick="stopCameraScanner()" class="hidden bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"><i class="fa-solid fa-stop mr-1"></i> Stop Camera</button>
+            </div>
+          </div>
+          <div id="reader-wrapper" class="hidden mb-4 bg-slate-900 rounded-lg overflow-hidden"><div id="reader" class="w-full"></div></div>
+
+          <form onsubmit="handleManualBarcode(event)" class="flex gap-2">
+            <div class="relative flex-grow">
+              <i class="fa-solid fa-barcode absolute left-3.5 top-3 text-slate-400"></i>
+              <input type="text" id="barcode-input" autocomplete="off" placeholder="Scan or type barcode..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium transition">Add Item</button>
+          </form>
+          <p id="scan-feedback" class="text-xs text-slate-500 mt-2">Tip: Neeche kisi bhi product par click karke scan simulate karein.</p>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-bold text-slate-800">Products (Click to Add)</h2>
+            <input type="text" id="pos-search" onkeyup="renderQuickProducts()" placeholder="Search item..." class="border border-slate-300 rounded-lg px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          </div>
+          <div id="quick-product-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-5">
+        <div id="cart-card" class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 flex flex-col h-full scroll-mt-20">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+            <div>
+              <h2 class="font-bold text-slate-800 text-lg">Current Bill Cart</h2>
+              <p class="text-xs text-slate-400" id="active-operator-label">Operator: -</p>
+            </div>
+            <button onclick="clearCart()" class="text-xs text-rose-600 hover:underline font-medium">Clear Cart</button>
+          </div>
+
+          <div id="cart-items-container" class="flex-grow overflow-y-auto max-h-72 space-y-2 pr-1"></div>
+
+          <div class="border-t border-slate-200 pt-4 mt-4 space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input type="text" id="cust-name" placeholder="Customer name (optional)" class="border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm">
+              <input type="tel" id="cust-phone" placeholder="Phone (optional)" class="border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm">
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs text-slate-500 mb-1">Discount (%)</label>
+                <input type="number" id="discount-input" value="0" min="0" max="100" oninput="renderCart()" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-500 mb-1">GST / Tax (%)</label>
+                <input type="number" id="tax-input" value="5" min="0" max="50" oninput="renderCart()" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-slate-500 mb-1">Payment</label>
+                <select id="payment-mode" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+                  <option>Cash</option><option>UPI</option><option>Card</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="bg-slate-50 p-3.5 rounded-lg space-y-1.5 text-sm">
+              <div class="flex justify-between text-slate-600"><span>Subtotal:</span><span id="summary-subtotal">₹0.00</span></div>
+              <div class="flex justify-between text-emerald-600"><span>Discount:</span><span id="summary-discount">-₹0.00</span></div>
+              <div class="flex justify-between text-slate-600"><span>Tax (GST):</span><span id="summary-tax">+₹0.00</span></div>
+              <div class="flex justify-between font-bold text-lg text-slate-900 border-t border-slate-200 pt-2 mt-1"><span>Grand Total:</span><span id="summary-total">₹0.00</span></div>
+            </div>
+
+            <button onclick="checkoutAndPreviewReceipt()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition flex items-center justify-center space-x-2">
+              <i class="fa-solid fa-receipt"></i><span>Generate Bill & Thermal Receipt</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== INVENTORY ========== -->
+    <section id="view-inventory" class="hidden space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h2 id="prod-form-title" class="font-bold text-lg text-slate-800 mb-4">Add New Product</h2>
+        <form onsubmit="saveProduct(event)" class="grid grid-cols-1 sm:grid-cols-5 gap-4">
+          <input type="text" id="new-prod-barcode" required placeholder="Barcode (e.g., 890109)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <input type="text" id="new-prod-name" required placeholder="Product Name" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <input type="number" step="0.01" min="0" id="new-prod-price" required placeholder="Unit Price (₹)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <input type="number" min="0" id="new-prod-stock" required placeholder="Stock qty" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <div class="flex gap-2">
+            <button type="submit" id="prod-save-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2 text-sm transition"><i class="fa-solid fa-plus mr-1"></i> Save</button>
+            <button type="button" id="prod-cancel-btn" onclick="cancelEdit()" class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg px-3 py-2 text-sm transition">Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="low-stock-alert" class="hidden bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-4 text-sm"></div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="p-5 border-b border-slate-200"><h2 class="font-bold text-lg text-slate-800">Product Master Table</h2></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 text-slate-600 border-b border-slate-200">
+                <th class="py-3 px-4 font-semibold">Barcode ID</th>
+                <th class="py-3 px-4 font-semibold">Item Name</th>
+                <th class="py-3 px-4 font-semibold">Price (₹)</th>
+                <th class="py-3 px-4 font-semibold">Stock</th>
+                <th class="py-3 px-4 font-semibold text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-table-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== REPORTS ========== -->
+    <section id="view-reports" class="hidden space-y-6">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">From</label>
+          <input type="date" id="rep-from" onchange="renderReports()" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">To</label>
+          <input type="date" id="rep-to" onchange="renderReports()" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm">
+        </div>
+        <button onclick="setToday()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg">Today</button>
+        <button onclick="clearDates()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg">All</button>
+        <button onclick="exportCSV()" class="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg"><i class="fa-solid fa-file-csv mr-1"></i> Export CSV</button>
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div class="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-semibold uppercase text-slate-400">Total Bills</p>
+          <p class="text-3xl font-bold text-slate-900 mt-1" id="report-total-bills">0</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-semibold uppercase text-slate-400">Total Sales</p>
+          <p class="text-3xl font-bold text-emerald-600 mt-1" id="report-total-revenue">₹0.00</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-semibold uppercase text-slate-400">Avg Basket</p>
+          <p class="text-3xl font-bold text-slate-900 mt-1" id="report-avg-bill">₹0.00</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-semibold uppercase text-slate-400">By Payment Mode</p>
+          <div id="report-payments" class="text-sm mt-1 space-y-0.5"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="p-5 border-b border-slate-200"><h2 class="font-bold text-lg text-slate-800">Transaction Records & Bill History</h2></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 text-slate-600 border-b border-slate-200">
+                <th class="py-3 px-4 font-semibold">Invoice #</th>
+                <th class="py-3 px-4 font-semibold">Date & Time</th>
+                <th class="py-3 px-4 font-semibold hidden sm:table-cell">Customer</th>
+                <th class="py-3 px-4 font-semibold hidden sm:table-cell">Items</th>
+                <th class="py-3 px-4 font-semibold">Payment</th>
+                <th class="py-3 px-4 font-semibold">Total</th>
+                <th class="py-3 px-4 font-semibold text-right">Receipt</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== SETTINGS ========== -->
+    <section id="view-settings" class="hidden space-y-6 max-w-3xl">
+      <form onsubmit="saveSettings(event)" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-5">
+        <h2 class="font-bold text-lg text-slate-800">Store & Receipt Settings</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div><label class="block text-xs text-slate-500 mb-1">Store Name</label><input id="set-name" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Phone</label><input id="set-phone" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div class="sm:col-span-2"><label class="block text-xs text-slate-500 mb-1">Address</label><input id="set-address" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">GSTIN (optional)</label><input id="set-gstin" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Footer Message</label><input id="set-footer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Paper Width</label>
+            <select id="set-paper" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="32">58mm (32 chars)</option>
+              <option value="48">80mm (48 chars)</option>
+            </select></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Low Stock Alert (qty)</label><input id="set-low" type="number" min="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Bluetooth chunk size (bytes)</label><input id="set-chunk" type="number" min="20" max="512" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+        </div>
+
+        <h3 class="font-semibold text-slate-700 pt-2 border-t border-slate-100">Change PIN</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div><label class="block text-xs text-slate-500 mb-1">Admin PIN</label><input id="set-admin-pin" type="password" inputmode="numeric" minlength="4" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-1">Cashier PIN</label><input id="set-cashier-pin" type="password" inputmode="numeric" minlength="4" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></div>
+        </div>
+
+        <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-5 py-2.5 text-sm"><i class="fa-solid fa-floppy-disk mr-1"></i> Save Settings</button>
+      </form>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-3">
+        <h2 class="font-bold text-lg text-slate-800">Backup</h2>
+        <p class="text-sm text-slate-500">Data sirf is browser me save hai. Browser data clear karne se pehle backup le lein.</p>
+        <div class="flex flex-wrap gap-3">
+          <button onclick="exportBackup()" class="bg-slate-800 hover:bg-slate-900 text-white text-sm font-semibold px-4 py-2 rounded-lg"><i class="fa-solid fa-download mr-1"></i> Download Backup</button>
+          <label class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold px-4 py-2 rounded-lg cursor-pointer"><i class="fa-solid fa-upload mr-1"></i> Restore Backup
+            <input type="file" accept=".json" class="hidden" onchange="importBackup(event)">
+          </label>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- RECEIPT MODAL -->
+  <div id="receipt-modal" class="hidden fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="p-4 bg-slate-800 text-white flex justify-between items-center">
+        <h3 class="font-bold text-sm"><i class="fa-solid fa-print mr-2"></i>Thermal Receipt Preview</h3>
+        <button onclick="closeReceiptModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div class="p-6 bg-slate-200 overflow-y-auto flex justify-center">
+        <div id="thermal-receipt-preview" class="bg-white w-64 p-4 shadow-md receipt-font text-xs text-slate-900 leading-relaxed"></div>
+      </div>
+      <div class="p-4 border-t border-slate-200 bg-white grid grid-cols-2 gap-3">
+        <button onclick="printViaWebBluetooth()" id="bt-print-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-3 rounded-lg text-xs flex items-center justify-center space-x-1.5 transition">
+          <i class="fa-brands fa-bluetooth-b"></i><span>Bluetooth Thermal Print</span>
+        </button>
+        <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2.5 px-3 rounded-lg text-xs flex items-center justify-center space-x-1.5 transition">
+          <i class="fa-solid fa-print"></i><span>Browser / USB Print</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="hidden fixed bottom-36 md:bottom-24 lg:bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-slate-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg"></div>
+
+  <script>
+    // ============ STORAGE HELPERS ============
+    function load(key, fallback) {
+      try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback; } catch (e) { return fallback; }
+    }
+    function save(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function money(n) { return '₹' + Number(n).toFixed(2); }
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.classList.remove('hidden');
+      clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 2500);
+    }
+
+    // ============ DATA ============
+    const defaultProducts = [
+      { barcode: "890101", name: "A4 Spiral Notebook", price: 65.00, stock: 50 },
+      { barcode: "890102", name: "Gel Pen Pack (Blue)", price: 45.00, stock: 50 },
+      { barcode: "890103", name: "Organic Green Tea", price: 140.00, stock: 30 },
+      { barcode: "890104", name: "Whole Wheat Bread", price: 42.00, stock: 20 },
+      { barcode: "890105", name: "Geometry Box Set", price: 110.00, stock: 25 },
+      { barcode: "890106", name: "Almond Milk 1L", price: 185.00, stock: 15 }
+    ];
+    const defaultSettings = {
+      storeName: "SMARTPOS RETAIL STORE", address: "Main Bazaar Road", phone: "", gstin: "",
+      footer: "Thank you for shopping!", paperChars: 32, lowStock: 5, chunkSize: 100,
+      adminPin: "1234", cashierPin: "1111"
+    };
+
+    let products = load('smartpos_products', defaultProducts).map(p => ({ ...p, stock: p.stock ?? 100 }));
+    let transactions = load('smartpos_transactions', []);
+    let settings = { ...defaultSettings, ...load('smartpos_settings', {}) };
+    let invoiceCounter = load('smartpos_invoice_counter', transactions.length);
+    let session = null;          // { role, label }
+    let cart = [];
+    let currentReceiptData = null;
+    let html5QrcodeScanner = null;
+    let lastScan = { code: '', time: 0 };
+    let btDevice = null, btCharacteristic = null;
+    let editingBarcode = null;
+    let currentTab = 'pos';
+
+    // ============ AUTH ============
+    document.getElementById('login-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      const role = document.getElementById('login-user').value;
+      const pin = document.getElementById('login-pin').value;
+      const expected = role === 'admin' ? settings.adminPin : settings.cashierPin;
+      const err = document.getElementById('login-error');
+      if (pin !== expected) {
+        err.textContent = 'Galat PIN. Dobara try karein.';
+        err.classList.remove('hidden');
+        document.getElementById('login-pin').value = '';
+        return;
+      }
+      err.classList.add('hidden');
+      document.getElementById('login-pin').value = '';
+      startSession(role);
+    });
+
+    function startSession(role) {
+      session = { role, label: role === 'admin' ? 'Admin (Store Owner)' : 'Cashier 01 (Counter A)' };
+      sessionStorage.setItem('smartpos_session', role);
+      document.getElementById('active-operator-label').textContent = 'Operator: ' + session.label;
+      document.getElementById('login-screen').classList.add('hidden');
+      document.querySelectorAll('.admin-only').forEach(el => el.classList.toggle('hidden', role !== 'admin'));
+      switchTab('pos');
+      renderQuickProducts();
+      renderCart();
+    }
+
+    function logout() {
+      stopCameraScanner();
+      cart = [];
+      session = null;
+      sessionStorage.removeItem('smartpos_session');
+      closeReceiptModal();
+      document.getElementById('login-screen').classList.remove('hidden');
+    }
+
+    // ============ TABS ============
+    function switchTab(tab) {
+      if ((tab === 'inventory' || tab === 'settings') && (!session || session.role !== 'admin')) {
+        toast('Sirf Admin ke liye'); return;
+      }
+      ['pos', 'inventory', 'reports', 'settings'].forEach(t => {
+        document.getElementById('view-' + t).classList.add('hidden');
+        const b = document.getElementById('tab-' + t);
+        b.classList.remove('bg-emerald-600', 'text-white');
+        b.classList.add('text-slate-300');
+      });
+      document.getElementById('view-' + tab).classList.remove('hidden');
+      const active = document.getElementById('tab-' + tab);
+      active.classList.add('bg-emerald-600', 'text-white');
+      active.classList.remove('text-slate-300');
+
+      currentTab = tab;
+      ['pos', 'inventory', 'reports', 'settings'].forEach(t => {
+        const m = document.getElementById('mtab-' + t);
+        m.classList.toggle('text-emerald-400', t === tab);
+        m.classList.toggle('text-slate-400', t !== tab);
+      });
+      updateCartBar();
+      window.scrollTo(0, 0);
+
+      if (tab !== 'pos') stopCameraScanner();
+      if (tab === 'pos') renderQuickProducts();
+      if (tab === 'inventory') renderInventoryTable();
+      if (tab === 'reports') renderReports();
+      if (tab === 'settings') fillSettingsForm();
+    }
+
+    // ============ CAMERA SCANNER ============
+    function startCameraScanner() {
+      if (html5QrcodeScanner) return;
+      document.getElementById('reader-wrapper').classList.remove('hidden');
+      document.getElementById('start-cam-btn').classList.add('hidden');
+      document.getElementById('stop-cam-btn').classList.remove('hidden');
+
+      html5QrcodeScanner = new Html5Qrcode("reader");
+      html5QrcodeScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: (vw) => ({ width: Math.min(280, Math.floor(vw * 0.85)), height: 120 }) },
+        (decodedText) => {
+          const now = Date.now();
+          if (decodedText === lastScan.code && now - lastScan.time < 1800) return; // duplicate frame guard
+          lastScan = { code: decodedText, time: now };
+          scanBarcode(decodedText);
+        },
+        () => {}
+      ).catch(() => {
+        alert("Camera access unavailable ya denied. Aap barcode type kar sakte hain ya product par click kar sakte hain.");
+        html5QrcodeScanner = null;
+        stopCameraScanner();
+      });
+    }
+
+    function stopCameraScanner() {
+      const scanner = html5QrcodeScanner;
+      html5QrcodeScanner = null;
+      if (scanner) {
+        scanner.stop().then(() => scanner.clear()).catch(() => {});
+      }
+      document.getElementById('reader-wrapper').classList.add('hidden');
+      document.getElementById('start-cam-btn').classList.remove('hidden');
+      document.getElementById('stop-cam-btn').classList.add('hidden');
+    }
+
+    // ============ CART ============
+    function handleManualBarcode(e) {
+      e.preventDefault();
+      const input = document.getElementById('barcode-input');
+      const code = input.value.trim();
+      if (code) { scanBarcode(code); input.value = ''; }
+      input.focus();
+    }
+
+    function feedback(html) { document.getElementById('scan-feedback').innerHTML = html; }
+
+    function scanBarcode(code) {
+      const product = products.find(p => p.barcode === code);
+      if (!product) {
+        feedback(`<span class="text-rose-600 font-semibold"><i class="fa-solid fa-circle-exclamation mr-1"></i> Barcode "${esc(code)}" database me nahi mila.</span>`);
+        return;
+      }
+      const existing = cart.find(i => i.barcode === code);
+      const inCart = existing ? existing.qty : 0;
+      if (inCart + 1 > product.stock) {
+        feedback(`<span class="text-rose-600 font-semibold"><i class="fa-solid fa-ban mr-1"></i> ${esc(product.name)}: stock khatam (available ${product.stock}).</span>`);
+        return;
+      }
+      if (existing) existing.qty += 1;
+      else cart.push({ barcode: product.barcode, name: product.name, price: product.price, qty: 1 });
+
+      feedback(`<span class="text-emerald-600 font-semibold"><i class="fa-solid fa-check-circle mr-1"></i> Added: ${esc(product.name)} (${money(product.price)})</span>`);
+      renderCart();
+    }
+
+    function updateQty(barcode, delta) {
+      const i = cart.findIndex(x => x.barcode === barcode);
+      if (i < 0) return;
+      const product = products.find(p => p.barcode === barcode);
+      if (delta > 0 && product && cart[i].qty + delta > product.stock) {
+        toast('Stock limit: ' + product.stock); return;
+      }
+      cart[i].qty += delta;
+      if (cart[i].qty <= 0) cart.splice(i, 1);
+      renderCart();
+    }
+
+    function clearCart() { cart = []; renderCart(); }
+
+    function calcTotals() {
+      const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
+      const discountPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('discount-input').value) || 0));
+      const taxPct = Math.min(50, Math.max(0, parseFloat(document.getElementById('tax-input').value) || 0));
+      const discountAmt = subtotal * discountPct / 100;
+      const taxable = subtotal - discountAmt;
+      const taxAmt = taxable * taxPct / 100;
+      return { subtotal, discountPct, taxPct, discountAmt, taxAmt, total: taxable + taxAmt };
+    }
+
+    function renderCart() {
+      const c = document.getElementById('cart-items-container');
+      if (cart.length === 0) {
+        c.innerHTML = `<div class="text-center py-10 text-slate-400 text-sm"><i class="fa-solid fa-basket-shopping text-2xl mb-2 block"></i>Cart khaali hai. Barcode scan karein.</div>`;
+      } else {
+        c.innerHTML = cart.map(item => `
+          <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+            <div class="min-w-0 pr-2">
+              <p class="font-semibold text-sm text-slate-800 truncate">${esc(item.name)}</p>
+              <p class="text-xs text-slate-500">${money(item.price)} × ${item.qty} = <span class="font-semibold text-slate-700">${money(item.price * item.qty)}</span></p>
+            </div>
+            <div class="flex items-center space-x-1.5 shrink-0">
+              <button data-bc="${esc(item.barcode)}" onclick="updateQty(this.dataset.bc, -1)" class="w-9 h-9 sm:w-7 sm:h-7 bg-white border border-slate-300 rounded text-slate-700 hover:bg-slate-100 font-bold">-</button>
+              <span class="w-6 text-center text-xs font-bold">${item.qty}</span>
+              <button data-bc="${esc(item.barcode)}" onclick="updateQty(this.dataset.bc, 1)" class="w-9 h-9 sm:w-7 sm:h-7 bg-white border border-slate-300 rounded text-slate-700 hover:bg-slate-100 font-bold">+</button>
+            </div>
+          </div>`).join('');
+      }
+      const t = calcTotals();
+      document.getElementById('summary-subtotal').textContent = money(t.subtotal);
+      document.getElementById('summary-discount').textContent = '-' + money(t.discountAmt);
+      document.getElementById('summary-tax').textContent = '+' + money(t.taxAmt);
+      document.getElementById('summary-total').textContent = money(t.total);
+      updateCartBar(t);
+    }
+
+    function updateCartBar(t) {
+      const bar = document.getElementById('cart-bar');
+      const show = !!session && currentTab === 'pos' && cart.length > 0;
+      bar.classList.toggle('hidden', !show);
+      if (!show) return;
+      t = t || calcTotals();
+      const qty = cart.reduce((s, i) => s + i.qty, 0);
+      document.getElementById('cart-bar-count').textContent = qty + (qty === 1 ? ' item' : ' items') + ' • View Cart';
+      document.getElementById('cart-bar-total').textContent = money(t.total);
+    }
+
+    function scrollToCart() {
+      document.getElementById('cart-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ============ PRODUCTS ============
+    function stockBadge(p) {
+      if (p.stock <= 0) return `<span class="text-[10px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-semibold">Out of stock</span>`;
+      if (p.stock <= settings.lowStock) return `<span class="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-semibold">Low: ${p.stock}</span>`;
+      return `<span class="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Stock: ${p.stock}</span>`;
+    }
+
+    function renderQuickProducts() {
+      const q = document.getElementById('pos-search').value.toLowerCase();
+      const list = products.filter(p => p.name.toLowerCase().includes(q) || p.barcode.includes(q));
+      document.getElementById('quick-product-grid').innerHTML = list.length ? list.map(p => `
+        <button data-bc="${esc(p.barcode)}" onclick="scanBarcode(this.dataset.bc)" ${p.stock <= 0 ? 'disabled' : ''}
+          class="text-left p-3 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 transition group ${p.stock <= 0 ? 'opacity-50 cursor-not-allowed' : ''}">
+          <div class="flex justify-between items-start">
+            <span class="text-[11px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">${esc(p.barcode)}</span>
+            ${stockBadge(p)}
+          </div>
+          <p class="font-semibold text-sm text-slate-800 mt-2 truncate">${esc(p.name)}</p>
+          <p class="text-emerald-700 font-bold text-sm mt-0.5">${money(p.price)}</p>
+        </button>`).join('')
+        : `<p class="col-span-full text-sm text-slate-400 text-center py-6">Koi product nahi mila.</p>`;
+    }
+
+    function saveProduct(e) {
+      e.preventDefault();
+      const barcode = document.getElementById('new-prod-barcode').value.trim();
+      const name = document.getElementById('new-prod-name').value.trim();
+      const price = parseFloat(document.getElementById('new-prod-price').value);
+      const stock = parseInt(document.getElementById('new-prod-stock').value, 10);
+      if (!barcode || !name || isNaN(price) || price < 0 || isNaN(stock) || stock < 0) {
+        alert('Sabhi fields sahi se bharein.'); return;
+      }
+      if (editingBarcode) {
+        const i = products.findIndex(p => p.barcode === editingBarcode);
+        if (barcode !== editingBarcode && products.some(p => p.barcode === barcode)) { alert('Yeh barcode already exist karta hai!'); return; }
+        products[i] = { barcode, name, price, stock };
+        toast('Product update ho gaya');
+      } else {
+        if (products.some(p => p.barcode === barcode)) { alert('Yeh barcode already exist karta hai!'); return; }
+        products.push({ barcode, name, price, stock });
+        toast('Product add ho gaya');
+      }
+      save('smartpos_products', products);
+      cancelEdit();
+      renderInventoryTable();
+      renderQuickProducts();
+    }
+
+    function editProduct(barcode) {
+      const p = products.find(x => x.barcode === barcode);
+      if (!p) return;
+      editingBarcode = barcode;
+      document.getElementById('new-prod-barcode').value = p.barcode;
+      document.getElementById('new-prod-name').value = p.name;
+      document.getElementById('new-prod-price').value = p.price;
+      document.getElementById('new-prod-stock').value = p.stock;
+      document.getElementById('prod-form-title').textContent = 'Edit Product';
+      document.getElementById('prod-save-btn').innerHTML = '<i class="fa-solid fa-check mr-1"></i> Update';
+      document.getElementById('prod-cancel-btn').classList.remove('hidden');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function cancelEdit() {
+      editingBarcode = null;
+      document.getElementById('new-prod-barcode').value = '';
+      document.getElementById('new-prod-name').value = '';
+      document.getElementById('new-prod-price').value = '';
+      document.getElementById('new-prod-stock').value = '';
+      document.getElementById('prod-form-title').textContent = 'Add New Product';
+      document.getElementById('prod-save-btn').innerHTML = '<i class="fa-solid fa-plus mr-1"></i> Save';
+      document.getElementById('prod-cancel-btn').classList.add('hidden');
+    }
+
+    function deleteProduct(barcode) {
+      const p = products.find(x => x.barcode === barcode);
+      if (!p || !confirm(`"${p.name}" delete karna hai?`)) return;
+      products = products.filter(x => x.barcode !== barcode);
+      cart = cart.filter(x => x.barcode !== barcode);
+      save('smartpos_products', products);
+      renderInventoryTable(); renderQuickProducts(); renderCart();
+    }
+
+    function renderInventoryTable() {
+      const low = products.filter(p => p.stock <= settings.lowStock);
+      const alertBox = document.getElementById('low-stock-alert');
+      if (low.length) {
+        alertBox.classList.remove('hidden');
+        alertBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1"></i> <b>Low / Out of stock:</b> ` +
+          low.map(p => `${esc(p.name)} (${p.stock})`).join(', ');
+      } else alertBox.classList.add('hidden');
+
+      document.getElementById('inventory-table-body').innerHTML = products.map(p => `
+        <tr class="hover:bg-slate-50">
+          <td class="py-3 px-4 font-mono text-xs">${esc(p.barcode)}</td>
+          <td class="py-3 px-4 font-medium">${esc(p.name)}</td>
+          <td class="py-3 px-4">${money(p.price)}</td>
+          <td class="py-3 px-4">${stockBadge(p)}</td>
+          <td class="py-3 px-4 text-right space-x-3">
+            <button data-bc="${esc(p.barcode)}" onclick="editProduct(this.dataset.bc)" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">Edit</button>
+            <button data-bc="${esc(p.barcode)}" onclick="deleteProduct(this.dataset.bc)" class="text-rose-600 hover:text-rose-800 text-xs font-semibold">Delete</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    // ============ CHECKOUT & RECEIPT ============
+    function checkoutAndPreviewReceipt() {
+      if (cart.length === 0) { alert('Pehle kam se kam ek item scan karein.'); return; }
+
+      // re-validate stock
+      for (const item of cart) {
+        const p = products.find(x => x.barcode === item.barcode);
+        if (!p || p.stock < item.qty) {
+          alert(`"${item.name}" ka stock kam hai (available: ${p ? p.stock : 0}).`); return;
+        }
+      }
+
+      const t = calcTotals();
+      invoiceCounter += 1;
+      save('smartpos_invoice_counter', invoiceCounter);
+
+      const bill = {
+        invoiceNo: 'INV-' + String(invoiceCounter).padStart(5, '0'),
+        ts: Date.now(),
+        date: new Date().toLocaleString('en-IN'),
+        items: cart.map(i => ({ ...i })),
+        subtotal: t.subtotal, discountPct: t.discountPct, discountAmt: t.discountAmt,
+        taxPct: t.taxPct, taxAmt: t.taxAmt, total: t.total,
+        payment: document.getElementById('payment-mode').value,
+        customerName: document.getElementById('cust-name').value.trim(),
+        customerPhone: document.getElementById('cust-phone').value.trim(),
+        operator: session ? session.label : ''
+      };
+
+      // deduct stock
+      bill.items.forEach(item => {
+        const p = products.find(x => x.barcode === item.barcode);
+        if (p) p.stock -= item.qty;
+      });
+      save('smartpos_products', products);
+
+      transactions.unshift(bill);
+      save('smartpos_transactions', transactions);
+
+      document.getElementById('cust-name').value = '';
+      document.getElementById('cust-phone').value = '';
+      clearCart();
+      renderQuickProducts();
+      showReceiptModal(bill);
+    }
+
+    function showReceiptModal(bill) {
+      currentReceiptData = bill;
+      const itemsHtml = bill.items.map(i => `
+        <div>
+          <div>${esc(i.name)}</div>
+          <div class="flex justify-between"><span>&nbsp;&nbsp;${i.qty} x ${i.price.toFixed(2)}</span><span>${(i.price * i.qty).toFixed(2)}</span></div>
+        </div>`).join('');
+
+      document.getElementById('thermal-receipt-preview').innerHTML = `
+        <div class="text-center border-b border-dashed border-slate-400 pb-2 mb-2">
+          <p class="font-bold text-sm">${esc(settings.storeName)}</p>
+          ${settings.address ? `<p class="text-[10px]">${esc(settings.address)}</p>` : ''}
+          ${settings.phone ? `<p class="text-[10px]">Ph: ${esc(settings.phone)}</p>` : ''}
+          ${settings.gstin ? `<p class="text-[10px]">GSTIN: ${esc(settings.gstin)}</p>` : ''}
+          <p class="text-[10px] mt-1">${esc(bill.invoiceNo)}</p>
+          <p class="text-[10px]">${esc(bill.date)}</p>
+          ${bill.customerName || bill.customerPhone ? `<p class="text-[10px]">Cust: ${esc(bill.customerName)} ${esc(bill.customerPhone)}</p>` : ''}
+        </div>
+        <div class="space-y-1 border-b border-dashed border-slate-400 pb-2 mb-2">${itemsHtml}</div>
+        <div class="space-y-0.5 text-[11px]">
+          <div class="flex justify-between"><span>Subtotal:</span><span>${bill.subtotal.toFixed(2)}</span></div>
+          <div class="flex justify-between"><span>Discount${bill.discountPct ? ' (' + bill.discountPct + '%)' : ''}:</span><span>-${bill.discountAmt.toFixed(2)}</span></div>
+          <div class="flex justify-between"><span>GST${bill.taxPct ? ' (' + bill.taxPct + '%)' : ''}:</span><span>+${bill.taxAmt.toFixed(2)}</span></div>
+          <div class="flex justify-between font-bold text-xs border-t border-slate-400 pt-1 mt-1"><span>TOTAL:</span><span>${money(bill.total)}</span></div>
+          <div class="flex justify-between"><span>Paid by:</span><span>${esc(bill.payment)}</span></div>
+        </div>
+        <div class="text-center border-t border-dashed border-slate-400 pt-2 mt-3 text-[10px]">
+          <p>${esc(settings.footer)}</p>
+        </div>`;
+      document.getElementById('receipt-modal').classList.remove('hidden');
+    }
+
+    function closeReceiptModal() { document.getElementById('receipt-modal').classList.add('hidden'); }
+
+    // ============ ESC/POS BUILDER ============
+    function asciiOnly(s) { return String(s ?? '').replace(/₹/g, 'Rs.').replace(/[^\x20-\x7E]/g, '?'); }
+
+    function wrapText(text, width) {
+      const out = []; let s = asciiOnly(text);
+      while (s.length > width) { out.push(s.slice(0, width)); s = s.slice(width); }
+      out.push(s); return out;
+    }
+    function lr(left, right, width) {
+      left = asciiOnly(left); right = asciiOnly(right);
+      const space = width - left.length - right.length;
+      if (space >= 1) return left + ' '.repeat(space) + right + '\n';
+      return left.slice(0, Math.max(0, width - right.length - 1)) + ' ' + right + '\n';
+    }
+
+    function buildEscPos(bill) {
+      const W = parseInt(settings.paperChars, 10) || 32;
+      const line = '-'.repeat(W) + '\n';
+      const center = t => wrapText(t, W).map(l => l).join('\n') + '\n';
+      let s = '\x1B\x40';                 // init
+      s += '\x1B\x61\x01';               // center
+      s += '\x1B\x45\x01' + center(settings.storeName) + '\x1B\x45\x00'; // bold name
+      if (settings.address) s += center(settings.address);
+      if (settings.phone) s += center('Ph: ' + settings.phone);
+      if (settings.gstin) s += center('GSTIN: ' + settings.gstin);
+      s += line;
+      s += '\x1B\x61\x00';               // left
+      s += lr(bill.invoiceNo, bill.date.split(',')[0], W);
+      s += asciiOnly(bill.date.split(',')[1] ? bill.date.split(',')[1].trim() : '') + '\n';
+      if (bill.customerName || bill.customerPhone) s += asciiOnly('Cust: ' + bill.customerName + ' ' + bill.customerPhone).slice(0, W) + '\n';
+      s += line;
+      bill.items.forEach(i => {
+        wrapText(i.name, W).forEach(l => { s += l + '\n'; });
+        s += lr('  ' + i.qty + ' x ' + i.price.toFixed(2), (i.price * i.qty).toFixed(2), W);
+      });
+      s += line;
+      s += lr('Subtotal', bill.subtotal.toFixed(2), W);
+      s += lr('Discount' + (bill.discountPct ? ' ' + bill.discountPct + '%' : ''), '-' + bill.discountAmt.toFixed(2), W);
+      s += lr('GST' + (bill.taxPct ? ' ' + bill.taxPct + '%' : ''), bill.taxAmt.toFixed(2), W);
+      s += line;
+      s += '\x1B\x45\x01' + lr('TOTAL', 'Rs.' + bill.total.toFixed(2), W) + '\x1B\x45\x00';
+      s += lr('Paid by', bill.payment, W);
+      s += line;
+      s += '\x1B\x61\x01' + center(settings.footer) + '\n\n\n\n';
+      return s;
+    }
+
+    // ============ WEB BLUETOOTH ============
+    const BT_SERVICES = [
+      '000018f0-0000-1000-8000-00805f9b34fb',
+      'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+      '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+      '0000ff00-0000-1000-8000-00805f9b34fb',
+      '0000fee7-0000-1000-8000-00805f9b34fb'
+    ];
+
+    function setBtStatus(connected, name) {
+      document.getElementById('bt-status-text').textContent = connected ? (name || 'Printer Connected') : 'Connect Printer';
+      const b = document.getElementById('bt-status-btn');
+      b.classList.toggle('bg-emerald-700', connected);
+      b.classList.toggle('bg-slate-800', !connected);
+    }
+
+    async function connectBluetoothPrinter() {
+      if (!navigator.bluetooth) {
+        alert('Is browser me Web Bluetooth support nahi hai. Android par Google Chrome / Edge use karein (iPhone Safari par nahi chalta).');
+        return false;
+      }
+      try {
+        if (!btDevice) {
+          btDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_SERVICES });
+          btDevice.addEventListener('gattserverdisconnected', () => { btCharacteristic = null; setBtStatus(false); });
+        }
+        const server = await btDevice.gatt.connect();
+        btCharacteristic = null;
+        const services = await server.getPrimaryServices();
+        for (const svc of services) {
+          const chars = await svc.getCharacteristics();
+          const w = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+          if (w) { btCharacteristic = w; break; }
+        }
+        if (!btCharacteristic) throw new Error('Is device me printing ke liye writable characteristic nahi mili. Shayad printer Bluetooth Classic hai.');
+        setBtStatus(true, btDevice.name);
+        return true;
+      } catch (error) {
+        btDevice = null; btCharacteristic = null; setBtStatus(false);
+        if (error.name !== 'NotFoundError') alert('Bluetooth connection fail: ' + error.message);
+        return false;
+      }
+    }
+
+    async function printViaWebBluetooth() {
+      if (!currentReceiptData) return;
+      if (!btCharacteristic) {
+        const ok = await connectBluetoothPrinter();
+        if (!ok) return;
+      }
+      const btn = document.getElementById('bt-print-btn');
+      btn.disabled = true; btn.classList.add('opacity-60');
+      try {
+        const data = new TextEncoder().encode(buildEscPos(currentReceiptData));
+        const size = Math.max(20, parseInt(settings.chunkSize, 10) || 100);
+        const noResp = btCharacteristic.properties.writeWithoutResponse && !btCharacteristic.properties.write;
+        for (let i = 0; i < data.length; i += size) {
+          const chunk = data.slice(i, i + size);
+          if (noResp) await btCharacteristic.writeValueWithoutResponse(chunk);
+          else await btCharacteristic.writeValue(chunk);
+          await new Promise(r => setTimeout(r, 40));
+        }
+        toast('Receipt printer ko bhej di gayi');
+      } catch (err) {
+        alert('Print fail: ' + err.message + '\nPrinter dobara connect karke try karein, ya Settings me chunk size kam karein (jaise 20).');
+        btCharacteristic = null; setBtStatus(false);
+      } finally {
+        btn.disabled = false; btn.classList.remove('opacity-60');
+      }
+    }
+
+    // ============ REPORTS ============
+    function dateInputValue(d) {
+      const z = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+    }
+    function setToday() {
+      const v = dateInputValue(new Date());
+      document.getElementById('rep-from').value = v; document.getElementById('rep-to').value = v; renderReports();
+    }
+    function clearDates() {
+      document.getElementById('rep-from').value = ''; document.getElementById('rep-to').value = ''; renderReports();
+    }
+    function filteredTransactions() {
+      const f = document.getElementById('rep-from').value;
+      const t = document.getElementById('rep-to').value;
+      const from = f ? new Date(f + 'T00:00:00').getTime() : -Infinity;
+      const to = t ? new Date(t + 'T23:59:59.999').getTime() : Infinity;
+      return transactions.filter(x => (x.ts ?? 0) >= from && (x.ts ?? 0) <= to);
+    }
+
+    function renderReports() {
+      const list = filteredTransactions();
+      const totalRev = list.reduce((s, t) => s + t.total, 0);
+      document.getElementById('report-total-bills').textContent = list.length;
+      document.getElementById('report-total-revenue').textContent = money(totalRev);
+      document.getElementById('report-avg-bill').textContent = money(list.length ? totalRev / list.length : 0);
+
+      const byPay = {};
+      list.forEach(t => { const k = t.payment || 'Cash'; byPay[k] = (byPay[k] || 0) + t.total; });
+      document.getElementById('report-payments').innerHTML = Object.keys(byPay).length
+        ? Object.entries(byPay).map(([k, v]) => `<div class="flex justify-between"><span class="text-slate-500">${esc(k)}</span><span class="font-semibold">${money(v)}</span></div>`).join('')
+        : '<span class="text-slate-400 text-xs">-</span>';
+
+      document.getElementById('history-table-body').innerHTML = list.length === 0
+        ? `<tr><td colspan="7" class="py-8 text-center text-slate-400">Koi transaction nahi mila.</td></tr>`
+        : list.map(t => `
+          <tr class="hover:bg-slate-50">
+            <td class="py-3 px-4 font-mono text-xs font-semibold">${esc(t.invoiceNo)}</td>
+            <td class="py-3 px-4 text-xs text-slate-500">${esc(t.date)}</td>
+            <td class="py-3 px-4 text-xs hidden sm:table-cell">${esc(t.customerName || '-')}</td>
+            <td class="py-3 px-4 text-xs hidden sm:table-cell">${t.items.length} item(s)</td>
+            <td class="py-3 px-4 text-xs">${esc(t.payment || 'Cash')}</td>
+            <td class="py-3 px-4 font-bold text-emerald-700">${money(t.total)}</td>
+            <td class="py-3 px-4 text-right">
+              <button data-inv="${esc(t.invoiceNo)}" onclick="viewReceipt(this.dataset.inv)" class="text-blue-600 hover:underline text-xs font-semibold">View Receipt</button>
+            </td>
+          </tr>`).join('');
+    }
+
+    function viewReceipt(inv) {
+      const bill = transactions.find(t => t.invoiceNo === inv);
+      if (bill) showReceiptModal(bill);
+    }
+
+    function csvCell(v) {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    function downloadFile(name, content, type) {
+      const blob = new Blob([content], { type });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    function exportCSV() {
+      const list = filteredTransactions();
+      if (!list.length) { alert('Export karne ke liye koi bill nahi hai.'); return; }
+      const rows = [['Invoice', 'Date', 'Customer', 'Phone', 'Items', 'Payment', 'Subtotal', 'Discount', 'Tax', 'Total', 'Operator']];
+      list.forEach(t => rows.push([
+        t.invoiceNo, t.date, t.customerName || '', t.customerPhone || '',
+        t.items.map(i => `${i.name} x${i.qty}`).join('; '), t.payment || 'Cash',
+        t.subtotal.toFixed(2), t.discountAmt.toFixed(2), t.taxAmt.toFixed(2), t.total.toFixed(2), t.operator || ''
+      ]));
+      downloadFile('smartpos-bills-' + dateInputValue(new Date()) + '.csv', '\uFEFF' + rows.map(r => r.map(csvCell).join(',')).join('\n'), 'text/csv;charset=utf-8');
+    }
+
+    // ============ SETTINGS & BACKUP ============
+    function fillSettingsForm() {
+      document.getElementById('set-name').value = settings.storeName;
+      document.getElementById('set-phone').value = settings.phone;
+      document.getElementById('set-address').value = settings.address;
+      document.getElementById('set-gstin').value = settings.gstin;
+      document.getElementById('set-footer').value = settings.footer;
+      document.getElementById('set-paper').value = String(settings.paperChars);
+      document.getElementById('set-low').value = settings.lowStock;
+      document.getElementById('set-chunk').value = settings.chunkSize;
+      document.getElementById('set-admin-pin').value = settings.adminPin;
+      document.getElementById('set-cashier-pin').value = settings.cashierPin;
+    }
+
+    function saveSettings(e) {
+      e.preventDefault();
+      settings = {
+        storeName: document.getElementById('set-name').value.trim() || defaultSettings.storeName,
+        phone: document.getElementById('set-phone').value.trim(),
+        address: document.getElementById('set-address').value.trim(),
+        gstin: document.getElementById('set-gstin').value.trim(),
+        footer: document.getElementById('set-footer').value.trim(),
+        paperChars: parseInt(document.getElementById('set-paper').value, 10),
+        lowStock: parseInt(document.getElementById('set-low').value, 10) || 0,
+        chunkSize: parseInt(document.getElementById('set-chunk').value, 10) || 100,
+        adminPin: document.getElementById('set-admin-pin').value,
+        cashierPin: document.getElementById('set-cashier-pin').value
+      };
+      save('smartpos_settings', settings);
+      toast('Settings save ho gayi');
+    }
+
+    function exportBackup() {
+      const data = { products, transactions, settings, invoiceCounter, exportedAt: new Date().toISOString() };
+      downloadFile('smartpos-backup-' + dateInputValue(new Date()) + '.json', JSON.stringify(data, null, 2), 'application/json');
+    }
+
+    function importBackup(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const d = JSON.parse(reader.result);
+          if (!Array.isArray(d.products) || !Array.isArray(d.transactions)) throw new Error('Invalid file');
+          if (!confirm('Restore karne se current data replace ho jayega. Continue?')) return;
+          products = d.products.map(p => ({ ...p, stock: p.stock ?? 0 }));
+          transactions = d.transactions;
+          settings = { ...defaultSettings, ...(d.settings || {}) };
+          invoiceCounter = d.invoiceCounter ?? transactions.length;
+          save('smartpos_products', products);
+          save('smartpos_transactions', transactions);
+          save('smartpos_settings', settings);
+          save('smartpos_invoice_counter', invoiceCounter);
+          fillSettingsForm(); toast('Backup restore ho gaya');
+        } catch (err) { alert('Backup file sahi nahi hai.'); }
+        e.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    // ============ INIT ============
+    (function init() {
+      renderCart();
+      const saved = sessionStorage.getItem('smartpos_session');
+      if (saved === 'admin' || saved === 'cashier') startSession(saved);
+    })();
+  </script>
+</body>
+</html>
